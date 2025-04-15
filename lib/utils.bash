@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-# TODO: Ensure this is the correct GitHub homepage where releases can be downloaded for <YOUR TOOL>.
-TOOL_NAME="mongodb"
+# TODO: Ensure this is the correct GitHub homepage where releases can be downloaded for mongosh.
+TOOL_NAME="mongosh"
 
 fail() {
 	echo -e "asdf-$TOOL_NAME: $*"
@@ -12,7 +12,7 @@ fail() {
 
 curl_opts=(-fsSL)
 
-# NOTE: You might want to remove this if <YOUR TOOL> is not hosted on GitHub releases.
+# NOTE: You might want to remove this if mongosh is not hosted on GitHub releases.
 if [ -n "${GITHUB_API_TOKEN:-}" ]; then
 	curl_opts=("${curl_opts[@]}" -H "Authorization: token $GITHUB_API_TOKEN")
 fi
@@ -22,28 +22,37 @@ sort_versions() {
 		LC_ALL=C sort -t. -k 1,1 -k 2,2n -k 3,3n -k 4,4n -k 5,5n | awk '{print $2}'
 }
 
-list_github_tags() {
-	git ls-remote --tags --refs "$GH_REPO" |
-		grep -o 'refs/tags/.*' | cut -d/ -f3- |
-		sed 's/^v//' # NOTE: You might want to adapt this sed to remove non-version strings from tags
-}
-
 list_all_versions() {
-	# TODO: Adapt this. By default we simply list the tag names from GitHub releases.
-	# Change this function if <YOUR TOOL> has other means of determining installable versions.
-	list_github_tags
+  release_path="https://api.github.com/repos/mongodb-js/mongosh/releases"
+
+  versions=$(curl "${curl_opts[@]}" "$release_path" | jq -r '.[].tag_name' | grep -vE '^v[0-9]+$' | sed 's/^v//')
+  echo "$versions"
 }
 
-download_release() {
-	local version filename url
-	version="$1"
-	filename="$2"
+get_architecture() {
+  ARCH="$(uname -m)"
 
-	# TODO: Adapt the release URL convention for <YOUR TOOL>
-	url="$GH_REPO/archive/v${version}.tar.gz"
+  case $ARCH in
+    x86_64) ARCH="x64";;
+    aarch64) ARCH="arm64";;
+    armv7l) ARCH="armv7l";;
+    *) fail "Unsupported architecture: $ARCH";;
+  esac
 
-	echo "* Downloading $TOOL_NAME release $version..."
-	curl "${curl_opts[@]}" -o "$filename" -C - "$url" || fail "Could not download $url"
+  echo "$ARCH"
+}
+
+get_download_url() {
+  local version="$1"
+  local os_name="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  local arch="$(get_architecture)"
+
+  local archive_extension="tgz"
+  if [[ "$os_name" == "darwin" ]]; then
+    archive_extension="zip"
+  fi
+
+  echo "https://github.com/mongodb-js/mongosh/releases/download/v${version}/mongosh-${version}-${os_name}-${arch}.${archive_extension}"
 }
 
 install_version() {
@@ -51,22 +60,27 @@ install_version() {
 	local version="$2"
 	local install_path="${3%/bin}/bin"
 
-	if [ "$install_type" != "version" ]; then
-		fail "asdf-$TOOL_NAME supports release installs only"
-	fi
+  local download_url=$(get_download_url "$version")
+  local filename=$(basename "$download_url")
 
-	(
-		mkdir -p "$install_path"
-		cp -r "$ASDF_DOWNLOAD_PATH"/* "$install_path"
+  local tmp_download_dir=$(mktemp -d -t mongosh_XXXXXX)
 
-		# TODO: Assert <YOUR TOOL> executable exists.
-		local tool_cmd
-		tool_cmd="$(echo "$TOOL_TEST" | cut -d' ' -f1)"
-		test -x "$install_path/$tool_cmd" || fail "Expected $install_path/$tool_cmd to be executable."
+  local download_path="$tmp_download_dir/$filename"
 
-		echo "$TOOL_NAME $version installation was successful!"
-	) || (
-		rm -rf "$install_path"
-		fail "An error occurred while installing $TOOL_NAME $version."
-	)
+  echo "Downloading mongosh from ${download_url} to ${download_path}"
+
+  curl --retry 10 --retry-delay 2 -fLo $download_path $download_url 2> >(tee /tmp/curl_error >&2)
+  ERROR=$(</tmp/curl_error)
+
+  if [ $? -ne 0 ]; then
+   echo $ERROR
+   fail "Failed to download mongosh from ${download_url}"
+  fi
+
+  echo "Creating bin directory"
+  mkdir -p "$install_path"
+
+  echo "Copying binary"
+  tar -zxf ${download_path} --directory $tmp_download_dir
+  cp $tmp_download_dir/${filename%.*}/bin/* $install_path
 }
