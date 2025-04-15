@@ -1,0 +1,23 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  plugin_test:
+    name: asdf plugin test
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: asdf_plugin_test
+        uses: asdf-vm/actions/plugin-test@05e0d2ed97b598bfce82fd30daf324ae0c4570e6 # v3.0.2
+        with:
+          command: |
+            mongosh --version
