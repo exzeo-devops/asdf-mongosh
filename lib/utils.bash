@@ -35,7 +35,6 @@ get_architecture() {
   case $ARCH in
     x86_64) ARCH="x64";;
     arm64 | aarch64) ARCH="arm64";;
-    armv7l) ARCH="armv7l";;
     *) fail "Unsupported architecture: $ARCH";;
   esac
 
